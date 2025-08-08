@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cochevia - Drive Map (Vercel Deploy)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <!-- Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+
+  <!-- Mapbox Geocoder (search box) -->
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v4.8.0/mapbox-gl-geocoder.css" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v4.8.0/mapbox-gl-geocoder.min.js"></script>
+
+  <style>
+    body, html { margin:0; padding:0; height:100%; background:#0b0b0b; color:#fff; font-family: Arial, sans-serif; }
+    #map { position:relative; width:100%; height:100vh; min-height:520px; }
+
+    /* geocoder container position */
+    .geocoder { position: absolute; z-index: 3; left: 20px; top: 18px; width: 380px; }
+    @media (max-width:600px){ .geocoder{ width: calc(100% - 40px); left:20px; right:20px } }
+
+    /* legend */
+    .legend {
+      position: absolute;
+      z-index: 3;
+      top: 88px;
+      left: 20px;
+      background:rgba(17,17,17,0.95);
+      color:#fff;
+      padding:10px;
+      border-radius:6px;
+      font-size:13px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .legend .row { margin:5px 0; display:flex; align-items:center; gap:8px; }
+    .swatch { width:14px;height:14px;border-radius:3px;border:1px solid rgba(255,255,255,0.08); display:inline-block; }
+
+    /* marker label */
+    .marker-label { background:#FF8C00; color:#111; padding:6px 8px; border-radius:6px; font-weight:700; }
+
+    /* small attribution / bottom right */
+    .attribution {
+      position:absolute; right:12px; bottom:12px; z-index:3; background: rgba(0,0,0,0.45);
+      padding:6px 8px; border-radius:6px; font-size:12px; color:#ddd;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="geocoder" id="geocoder"></div>
+
+  <div class="legend">
+    <div style="font-weight:700; margin-bottom:6px;">Legend</div>
+    <div class="row"><span class="swatch" style="background:#00C853"></span> Driver signup: Success (Green)</div>
+    <div class="row"><span class="swatch" style="background:#FFD166"></span> Pending (Yellow)</div>
+    <div class="row"><span class="swatch" style="background:#FF6B6B"></span> Signup in progress (Red)</div>
+    <div class="row"><span class="swatch" style="background:#00E5FF"></span> Rider Hotspot (Glowing)</div>
+    <div style="margin-top:8px; font-size:12px; opacity:0.9;">Search a city → press Enter to zoom to the city</div>
+  </div>
+
+  <div class="attribution">Map style: Mapbox • Demo</div>
+
+  <script>
+    // ====== CONFIG ======
+    mapboxgl.accessToken = 'pk.eyJ1IjoiY29jaGV2aWEiLCJhIjoiY21lMDltNmZ6MDI4MDJsc2FieGp2d256ayJ9.cE2QlLmwuXFi9ya6Cgx4Mw';
+    const initialCenter = [-98.5, 39.5];
+    const initialZoom = 3.6;
+
+    // ====== Example GeoJSON (replace with your real data later) ======
+    const regionsGeoJSON = {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "properties": { "name":"South Florida", "status":"active" },
+          "geometry": {
+            "type":"Polygon",
+            "coordinates":[[[-81.9,25.2],[-80.0,25.2],[-80.0,26.8],[-81.9,26.8],[-81.9,25.2]]]
+          }
+        },
+        {
+          "type":"Feature",
+          "properties":{"name":"Atlanta","status":"pending"},
+          "geometry":{"type":"Polygon","coordinates":[[[-84.8,33.4],[-83.5,33.4],[-83.5,34.2],[-84.8,34.2],[-84.8,33.4]]]}
+        },
+        {
+          "type":"Feature",
+          "properties":{"name":"Austin","status":"in_progress"},
+          "geometry":{"type":"Polygon","coordinates":[[[-98.0,29.5],[-96.9,29.5],[-96.9,30.6],[-98.0,30.6],[-98.0,29.5]]]}
+        }
+      ]
+    };
+
+    const hotspotsGeoJSON = {
+      "type":"FeatureCollection",
+      "features":[
+        { "type":"Feature", "properties":{"intensity":1}, "geometry":{"type":"Point","coordinates":[-80.1918,25.7617]} }, // Miami
+        { "type":"Feature", "properties":{"intensity":0.9}, "geometry":{"type":"Point","coordinates":[-80.1358,26.1224]} }, // FtLaud
+        { "type":"Feature", "properties":{"intensity":0.6}, "geometry":{"type":"Point","coordinates":[-84.3880,33.7490]} }, // Atlanta
+        { "type":"Feature", "properties":{"intensity":0.7}, "geometry":{"type":"Point","coordinates":[-97.7431,30.2672]} }, // Austin
+        { "type":"Feature", "properties":{"intensity":1}, "geometry":{"type":"Point","coordinates":[-74.0060,40.7128]} }, // NYC
+        { "type":"Feature", "properties":{"intensity":0.8}, "geometry":{"type":"Point","coordinates":[-77.0369,38.9072]} }, // DC
+        { "type":"Feature", "properties":{"intensity":0.95}, "geometry":{"type":"Point","coordinates":[-118.2437,34.0522]} }, // LA
+        { "type":"Feature", "properties":{"intensity":0.85}, "geometry":{"type":"Point","coordinates":[-122.4194,37.7749]} } // SF
+      ]
+    };
+
+    const drivers = [
+      { name:"Driver signups open - Miami", coords:[-80.1918,25.7617], url:"#signup-miami" },
+      { name:"Driver signups open - Atlanta", coords:[-84.3880,33.7490], url:"#signup-atl" },
+      { name:"Driver signups open - Austin", coords:[-97.7431,30.2672], url:"#signup-aus" }
+    ];
+
+    // ====== MAP INIT ======
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/dark-v10',
+      center: initialCenter,
+      zoom: initialZoom
+    });
+
+    map.on('load', () => {
+      // regions
+      map.addSource('regions', { type:'geojson', data: regionsGeoJSON });
+
+      map.addLayer({
+        id: 'regions-fill',
+        type: 'fill',
+        source: 'regions',
+        paint: {
+          'fill-color': [
+            'match',
+            ['get', 'status'],
+            'active', 'rgba(0,200,83,0.12)',
+            'pending','rgba(255,209,102,0.10)',
+            'in_progress','rgba(255,107,107,0.08)',
+            'rgba(0,0,0,0)'
+          ]
+        }
+      });
+
+      map.addLayer({
+        id: 'regions-line',
+        type: 'line',
+        source: 'regions',
+        paint: {
+          'line-color': [
+            'match',
+            ['get','status'],
+            'active','#00C853',
+            'pending','#FFD166',
+            'in_progress','#FF6B6B',
+            '#ffffff'
+          ],
+          'line-width': 3
+        }
+      });
+
+      // hotspots
+      map.addSource('hotspots', { type:'geojson', data: hotspotsGeoJSON });
+
+      map.addLayer({
+        id: 'hotspots-heat',
+        type: 'heatmap',
+        source: 'hotspots',
+        maxzoom: 9,
+        paint: {
+          'heatmap-weight': ['interpolate',['linear'], ['get','intensity'], 0, 0, 1, 1],
+          'heatmap-intensity': ['interpolate',['linear'], ['zoom'], 0, 1, 9, 2],
+          'heatmap-color': [
+            'interpolate',['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.1, 'rgba(0,230,255,0.12)',
+            0.3, 'rgba(0,230,200,0.18)',
+            0.6, 'rgba(0,200,150,0.3)',
+            1, 'rgba(0,200,150,0.75)'
+          ],
+          'heatmap-radius': ['interpolate',['linear'], ['get','intensity'], 0, 20, 1, 50],
+          'heatmap-opacity': 0.9
+        }
+      });
+
+      map.addLayer({
+        id: 'hotspot-pulse',
+        type: 'circle',
+        source: 'hotspots',
+        paint: {
+          'circle-color': 'rgba(0,230,255,0.9)',
+          'circle-radius': 10,
+          'circle-opacity': 0.6,
+          'circle-stroke-color': 'rgba(0,230,255,0.9)',
+          'circle-stroke-width': 0
+        }
+      });
+
+      // drivers markers
+      drivers.forEach(d => {
+        const el = document.createElement('div');
+        el.style.width = '18px';
+        el.style.height = '18px';
+        el.style.borderRadius = '9px';
+        el.style.background = '#FF8C00';
+        el.style.boxShadow = '0 0 8px rgba(255,140,0,0.6)';
+        el.style.border = '2px solid rgba(255,255,255,0.06)';
+        new mapboxgl.Marker(el).setLngLat(d.coords).setPopup(new mapboxgl.Popup({ offset: 12 }).setHTML(`<div class="marker-label">${d.name}</div>`)).addTo(map);
+      });
+
+      // geocoder (search)
+      const geocoder = new MapboxGeocoder({
+        accessToken: mapboxgl.accessToken,
+        mapboxgl: mapboxgl,
+        placeholder: 'Enter a City',
+        marker: false
+      });
+      document.getElementById('geocoder').appendChild(geocoder.onAdd(map));
+
+      geocoder.on('result', (ev) => {
+        const r = ev.result;
+        if (r.bbox) {
+          map.fitBounds(r.bbox, { padding: 40, duration: 900 });
+        } else if (r.center) {
+          map.flyTo({ center: r.center, zoom: 11, speed: 0.9 });
+        }
+      });
+
+      // pulse animation
+      let start = performance.now();
+      function animatePulse(){
+        const t = (performance.now() - start)/1000;
+        const radius = 8 + Math.abs(Math.sin(t * 1.6)) * 36;
+        const opacity = 0.5 + 0.4 * Math.abs(Math.cos(t * 1.6));
+        if (map.getLayer('hotspot-pulse')) {
+          map.setPaintProperty('hotspot-pulse', 'circle-radius', radius);
+          map.setPaintProperty('hotspot-pulse', 'circle-opacity', 0.45 * opacity);
+          map.setPaintProperty('hotspot-pulse', 'circle-stroke-width', 2 * (Math.abs(Math.sin(t*1.6))));
+        }
+        requestAnimationFrame(animatePulse);
+      }
+      animatePulse();
+    });
+  </script>
+</body>
+</html>
